@@ -636,33 +636,33 @@ class App:
                 time.sleep(0.3 / n_clicks)
         self._log(f"  → {clicked}회 클릭 완료")
 
-        # 캡챠 대기 (스페이스바 or 버튼)
-        self._log("캡챠 있으면 직접 풀고 [스페이스바] 또는 [✅ 캡챠 완료] 누르세요")
-        self._set_status("⚠ 캡챠 풀고 스페이스바 누르세요", YELLOW)
+        # 캡챠 대기 - 프로그램 창에 포커스 있을 때 스페이스바
+        self._log("캡챠 있으면 직접 풀고 → 프로그램 클릭 후 [스페이스바] 또는 [✅ 캡챠 완료]")
+        self._set_status("⚠ 캡챠 풀고 → 이 창 클릭 후 스페이스바!", YELLOW)
         self.paused = True
         self.root.after(0, lambda: self.captcha_btn.config(state="normal"))
-        # 스페이스바 바인딩
         self.root.after(0, lambda: self.root.bind("<space>", lambda e: self._captcha_done()))
+        self.root.after(0, lambda: self.root.bind("<Return>", lambda e: self._captcha_done()))
         while self.paused and not self.stop_flag:
-            time.sleep(0.1)
-        # 스페이스바 바인딩 해제
+            time.sleep(0.05)
         self.root.after(0, lambda: self.root.unbind("<space>"))
+        self.root.after(0, lambda: self.root.unbind("<Return>"))
         if self.stop_flag: return
 
         team = cfg["team"]
         seat = cfg["seat"]
 
-        # 1. 구역 클릭 (좌표)
-        time.sleep(0.5)
+        # 1. 구역 클릭 (좌표) - 딜레이 최소화
+        time.sleep(0.3)
         if cfg["zone"][0] > 0:
             self._log("🗺 구역 클릭")
             pyautogui.click(*cfg["zone"])
-            time.sleep(0.5)
+            time.sleep(0.3)
         if self.stop_flag: return
 
         # 2. 자동배정 클릭 (이미지 매칭)
-        self._click_image(team, seat, "auto", "자동배정", timeout=5)
-        time.sleep(0.3)
+        self._click_image(team, seat, "auto", "자동배정", timeout=4)
+        time.sleep(0.2)
         if self.stop_flag: return
 
         # 3. + 버튼 N번 (이미지 매칭)
@@ -670,13 +670,13 @@ class App:
         self._log(f"➕ + 버튼 {n}번 클릭")
         for i in range(n):
             if self.stop_flag: return
-            self._click_image(team, seat, "plus", f"+({i+1}/{n})", timeout=3)
-            time.sleep(0.15)
+            self._click_image(team, seat, "plus", f"+({i+1}/{n})", timeout=2)
+            time.sleep(0.1)
         if self.stop_flag: return
 
         # 4. 다음단계 클릭 (이미지 매칭)
-        time.sleep(0.3)
-        self._click_image(team, seat, "next", "다음단계", timeout=5)
+        time.sleep(0.2)
+        self._click_image(team, seat, "next", "다음단계", timeout=4)
 
         self._log("🎉 완료! 결제 진행하세요.")
         self._set_status("🎉 완료! 결제 진행하세요", GREEN)
