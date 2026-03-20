@@ -232,9 +232,9 @@ class App:
     def __init__(self, root):
         self.root = root
         self.root.title("🎫 자동 티켓팅 v10")
-        self.root.geometry("560x860")
+        self.root.geometry("580x700")
         self.root.configure(bg=BG)
-        self.root.resizable(False, True)
+        self.root.resizable(True, True)  # 창 크기 조절 가능
 
         self.t_hour = tk.StringVar(value="00")
         self.t_min  = tk.StringVar(value="00")
@@ -262,27 +262,22 @@ class App:
         self._on_team_change()
 
     def _build(self):
-        # 스크롤 가능한 캔버스 설정
-        canvas = tk.Canvas(self.root, bg=BG, highlightthickness=0)
-        scrollbar = tk.Scrollbar(self.root, orient="vertical", command=canvas.yview)
-        canvas.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side="right", fill="y")
-        canvas.pack(side="left", fill="both", expand=True)
+        # 스크롤 캔버스
+        self._canvas = tk.Canvas(self.root, bg=BG, highlightthickness=0)
+        sb = tk.Scrollbar(self.root, orient="vertical", command=self._canvas.yview)
+        self._canvas.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        self._canvas.pack(side="left", fill="both", expand=True)
 
-        # 실제 내용이 들어갈 프레임
-        self.frame = tk.Frame(canvas, bg=BG)
-        frame_id = canvas.create_window((0, 0), window=self.frame, anchor="nw")
+        self.frame = tk.Frame(self._canvas, bg=BG)
+        self._win_id = self._canvas.create_window((0, 0), window=self.frame, anchor="nw")
 
-        def _on_resize(e):
-            canvas.itemconfig(frame_id, width=canvas.winfo_width())
-        def _on_frame_configure(e):
-            canvas.configure(scrollregion=canvas.bbox("all"))
-        def _on_mousewheel(e):
-            canvas.yview_scroll(int(-1*(e.delta/120)), "units")
-
-        canvas.bind("<Configure>", _on_resize)
-        self.frame.bind("<Configure>", _on_frame_configure)
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        self.frame.bind("<Configure>", lambda e: self._canvas.configure(
+            scrollregion=self._canvas.bbox("all")))
+        self._canvas.bind("<Configure>", lambda e: self._canvas.itemconfig(
+            self._win_id, width=e.width))
+        self._canvas.bind_all("<MouseWheel>", lambda e: self._canvas.yview_scroll(
+            int(-1*(e.delta/120)), "units"))
 
         # 이제 self.frame 에 위젯 추가
         # 헤더
