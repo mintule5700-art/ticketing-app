@@ -56,43 +56,19 @@ DEVICE_FILE = os.path.join(BASE_DIR, ".device_id")
 TEAMS = {
     "삼성 라이온즈": {
         "seats": ["블루존", "원정응원석", "1루 내야지정석", "3루 내야지정석",
-                  "외야 잔디석", "블루존 테이블석", "SKY석"],
-    },
-    "한화 이글스": {
-        "seats": ["오렌지존", "외야", "내야 1루", "내야 3루",
-                  "중앙지정석", "테이블석"],
+                  "외야 잔디석", "SKY석"],
     },
     "LG 트윈스": {
         "seats": ["레드존", "블루존", "외야 자유석", "내야 지정석",
                   "프리미엄석", "테이블석"],
     },
+    "한화 이글스": {
+        "seats": ["오렌지존", "외야", "내야 1루", "내야 3루",
+                  "중앙지정석", "테이블석"],
+    },
     "KT 위즈": {
         "seats": ["KT존", "외야석", "내야 1루", "내야 3루",
                   "익사이팅석", "테이블석"],
-    },
-    "롯데 자이언츠": {
-        "seats": ["다이아몬드존", "외야 응원석", "내야 1루", "내야 3루",
-                  "VIP석", "패밀리석"],
-    },
-    "두산 베어스": {
-        "seats": ["블루존", "외야", "내야 1루", "내야 3루",
-                  "프리미엄 테이블석", "응원석"],
-    },
-    "SSG 랜더스": {
-        "seats": ["랜더스존", "외야석", "내야 1루", "내야 3루",
-                  "테이블석", "SKY석"],
-    },
-    "NC 다이노스": {
-        "seats": ["공룡존", "외야석", "내야 1루", "내야 3루",
-                  "테이블석", "가족석"],
-    },
-    "키움 히어로즈": {
-        "seats": ["히어로즈존", "외야석", "내야 1루", "내야 3루",
-                  "VIP석", "테이블석"],
-    },
-    "KIA 타이거즈": {
-        "seats": ["타이거즈존", "외야석", "내야 1루", "내야 3루",
-                  "VIP석", "테이블석"],
     },
 }
 
@@ -260,9 +236,9 @@ class App:
     def __init__(self, root):
         self.root = root
         self.root.title("🎫 자동 티켓팅 v10")
-        self.root.geometry("560x820")
+        self.root.geometry("560x860")
         self.root.configure(bg=BG)
-        self.root.resizable(False, False)
+        self.root.resizable(False, True)
 
         self.t_hour = tk.StringVar(value="00")
         self.t_min  = tk.StringVar(value="00")
@@ -310,10 +286,10 @@ class App:
         tm = tk.Frame(s1, bg=CARD); tm.pack(fill="x")
         for i, team in enumerate(team_list):
             rb = tk.Radiobutton(tm, text=team, variable=self.team_var, value=team,
-                           font=("Malgun Gothic", 10), bg=CARD, fg=TEXT,
+                           font=("Malgun Gothic", 11), bg=CARD, fg=TEXT,
                            selectcolor=BG, activebackground=CARD,
                            command=self._on_team_change)
-            rb.grid(row=i//3, column=i%3, sticky="w", padx=8, pady=2)
+            rb.grid(row=i//2, column=i%2, sticky="w", padx=16, pady=4)
 
         # ── STEP 2: 좌석 선택
         self._section("STEP 2  좌석 선택")
