@@ -505,6 +505,9 @@ class App:
         self.t_sec.set(f"{t.tm_sec:02d}");   self.t_ms.set("000")
 
     def _sync_time(self):
+        if hasattr(self, '_syncing') and self._syncing:
+            return  # 이미 동기화 중이면 무시
+        self._syncing = True
         self.offset_var.set("동기화 중...")
         def _do():
             offset = get_server_time_offset()
@@ -517,6 +520,7 @@ class App:
                 msg = f"✅ 서버 {abs(offset)*1000:.0f}ms 느림 보정"
             self._log(f"🕐 동기화: {msg}")
             self.root.after(0, lambda: self.offset_var.set(msg))
+            self._syncing = False
         threading.Thread(target=_do, daemon=True).start()
 
     def _log(self, msg):
@@ -702,8 +706,9 @@ class App:
         ))
 
     def _click_image(self, team, seat, btn, label, timeout=3.0):
-        """이미지 매칭으로 버튼 클릭 - confidence 낮춰서 더 잘 찾게"""
+        """이미지 매칭으로 버튼 클릭"""
         path = img_path(team, seat, btn)
+        self._log(f"🔍 이미지 경로: {path}")
         if os.path.exists(path):
             start = time.time()
             # confidence 0.7 → 0.6 → 0.5 순으로 낮춰가며 시도
