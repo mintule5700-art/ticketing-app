@@ -55,16 +55,26 @@ DEVICE_FILE = os.path.join(BASE_DIR, ".device_id")
 # ── 팀 & 좌석 구성 ───────────────────────────────────
 TEAMS = {
     "삼성 라이온즈": {
-        "seats": ["1루_익사이팅석", "3루_내야지정석", "3루_익사이팅석", "블루존", "원정응원석"],
+        "folder": "samsung",
+        "seats": {
+            "1루_익사이팅석": "1ru_exciting",
+            "3루_내야지정석": "3ru_infield",
+            "3루_익사이팅석": "3ru_exciting",
+            "블루존":         "bluezone",
+            "원정응원석":     "away",
+        },
     },
     "LG 트윈스": {
-        "seats": [],
+        "folder": "lg",
+        "seats": {},
     },
     "한화 이글스": {
-        "seats": [],
+        "folder": "hanwha",
+        "seats": {},
     },
     "KT 위즈": {
-        "seats": [],
+        "folder": "kt",
+        "seats": {},
     },
 }
 
@@ -98,10 +108,11 @@ def get_server_time_offset():
 
 
 def img_path(team, seat, btn):
-    """이미지 파일 경로 반환"""
-    safe_team = team.replace(" ", "_")
-    safe_seat = seat.replace(" ", "_")
-    return os.path.join(IMG_DIR, safe_team, safe_seat, f"{btn}.png")
+    """영어 폴더명으로 이미지 경로 반환"""
+    team_data = TEAMS.get(team, {})
+    team_folder = team_data.get("folder", team)
+    seat_folder = team_data.get("seats", {}).get(seat, seat)
+    return os.path.join(IMG_DIR, team_folder, seat_folder, f"{btn}.png")
 
 
 # ─────────────────────────────────────────────────────
@@ -448,7 +459,7 @@ class App:
 
     def _on_team_change(self):
         team  = self.team_var.get()
-        seats = TEAMS[team]["seats"]
+        seats = list(TEAMS[team]["seats"].keys())
 
         for w in self.seat_frame.winfo_children():
             w.destroy()
