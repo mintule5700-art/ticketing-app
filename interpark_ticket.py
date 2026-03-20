@@ -49,7 +49,7 @@ MUTED  = "#5a6070"
 BORDER = "#1e2535"
 
 BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
-IMG_DIR   = os.path.join(BASE_DIR, "images")
+IMG_DIR   = BASE_DIR  # images 폴더 없이 바로 samsung/ 등 폴더
 DEVICE_FILE = os.path.join(BASE_DIR, ".device_id")
 
 # ── 팀 & 좌석 구성 ───────────────────────────────────
