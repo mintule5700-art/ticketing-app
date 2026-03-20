@@ -55,7 +55,7 @@ DEVICE_FILE = os.path.join(BASE_DIR, ".device_id")
 # ── 팀 & 좌석 구성 ───────────────────────────────────
 TEAMS = {
     "삼성 라이온즈": {
-        "folder": "samsung",
+        "folder": "Samsung",
         "seats": {
             "1루_익사이팅석": "1ru_exciting",
             "3루_내야지정석": "3ru_infield",
