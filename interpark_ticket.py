@@ -1,15 +1,15 @@
 """
-자동 티켓팅 v9 - 서버 인증 버전
+자동 티켓팅 v10 - 이미지 매칭 + 팀/좌석 프리셋
 ────────────────────────────────
-- GCP 서버에서 로그인 인증
-- 1계정 1기기 제한
-- 프리셋 로컬 저장
+- 팀 선택 → 좌석 선택 → 연석 선택 → 시작
+- 이미지 매칭으로 버튼 자동 클릭
+- 좌표 캡처 불필요
 
-설치: pip install pyautogui requests
+설치: pip install pyautogui pillow requests
 """
 
 import tkinter as tk
-from tkinter import messagebox, scrolledtext, simpledialog
+from tkinter import messagebox, scrolledtext
 import threading
 import time
 import json
@@ -26,12 +26,14 @@ except ImportError:
 
 try:
     import pyautogui
+    import PIL
+    from PIL import ImageGrab
     pyautogui.FAILSAFE = True
+    pyautogui.PAUSE = 0
     PG_OK = True
 except ImportError:
     PG_OK = False
 
-# ── 서버 주소 (GCP 배포 후 변경) ─────────────────────
 SERVER_URL = "http://34.22.92.18:8000"
 
 BG     = "#0b0e14"
@@ -46,38 +48,88 @@ TEXT   = "#e8eaf0"
 MUTED  = "#5a6070"
 BORDER = "#1e2535"
 
-BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
-CONFIG_FILE = os.path.join(BASE_DIR, "presets.json")
+BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
+IMG_DIR   = os.path.join(BASE_DIR, "images")
 DEVICE_FILE = os.path.join(BASE_DIR, ".device_id")
 
+# ── 팀 & 좌석 구성 ───────────────────────────────────
+TEAMS = {
+    "삼성 라이온즈": {
+        "seats": ["블루존", "원정응원석", "1루 내야지정석", "3루 내야지정석",
+                  "외야 잔디석", "블루존 테이블석", "SKY석"],
+    },
+    "한화 이글스": {
+        "seats": ["오렌지존", "외야", "내야 1루", "내야 3루",
+                  "중앙지정석", "테이블석"],
+    },
+    "LG 트윈스": {
+        "seats": ["레드존", "블루존", "외야 자유석", "내야 지정석",
+                  "프리미엄석", "테이블석"],
+    },
+    "KT 위즈": {
+        "seats": ["KT존", "외야석", "내야 1루", "내야 3루",
+                  "익사이팅석", "테이블석"],
+    },
+    "롯데 자이언츠": {
+        "seats": ["다이아몬드존", "외야 응원석", "내야 1루", "내야 3루",
+                  "VIP석", "패밀리석"],
+    },
+    "두산 베어스": {
+        "seats": ["블루존", "외야", "내야 1루", "내야 3루",
+                  "프리미엄 테이블석", "응원석"],
+    },
+    "SSG 랜더스": {
+        "seats": ["랜더스존", "외야석", "내야 1루", "내야 3루",
+                  "테이블석", "SKY석"],
+    },
+    "NC 다이노스": {
+        "seats": ["공룡존", "외야석", "내야 1루", "내야 3루",
+                  "테이블석", "가족석"],
+    },
+    "키움 히어로즈": {
+        "seats": ["히어로즈존", "외야석", "내야 1루", "내야 3루",
+                  "VIP석", "테이블석"],
+    },
+    "KIA 타이거즈": {
+        "seats": ["타이거즈존", "외야석", "내야 1루", "내야 3루",
+                  "VIP석", "테이블석"],
+    },
+}
 
-def get_device_id() -> str:
-    """이 PC 고유 ID 생성 (MAC + 컴퓨터이름 기반)"""
+
+def get_device_id():
     if os.path.exists(DEVICE_FILE):
         with open(DEVICE_FILE, "r") as f:
             return f.read().strip()
-
-    # MAC 주소 + 호스트명으로 고유 ID 생성
-    mac      = uuid.getnode()
+    mac = uuid.getnode()
     hostname = platform.node()
-    raw      = f"{mac}-{hostname}"
-    dev_id   = hashlib.sha256(raw.encode()).hexdigest()[:32]
-
+    dev_id = hashlib.sha256(f"{mac}-{hostname}".encode()).hexdigest()[:32]
     with open(DEVICE_FILE, "w") as f:
         f.write(dev_id)
     return dev_id
 
 
-def load_presets():
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
+def get_server_time_offset():
+    try:
+        from email.utils import parsedate_to_datetime
+        before = time.time()
+        r = requests.head("https://www.ticketlink.co.kr", timeout=5)
+        after  = time.time()
+        server_time_str = r.headers.get("Date", "")
+        if not server_time_str:
+            return 0.0
+        server_ts = parsedate_to_datetime(server_time_str).timestamp()
+        latency   = (after - before) / 2
+        return server_ts - (before + latency)
+    except Exception:
+        return 0.0
 
 
-def save_presets(data):
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+def img_path(team, seat, btn):
+    """이미지 파일 경로 반환"""
+    safe_team = team.replace(" ", "_")
+    safe_seat = seat.replace(" ", "_")
+    return os.path.join(IMG_DIR, safe_team, safe_seat, f"{btn}.png")
 
 
 # ─────────────────────────────────────────────────────
@@ -87,15 +139,13 @@ class LoginWindow:
     def __init__(self, root):
         self.root = root
         self.root.title("🎫 티켓팅 - 로그인")
-        self.root.geometry("400x380")
+        self.root.geometry("400x360")
         self.root.configure(bg=BG)
         self.root.resizable(False, False)
         self.root.eval("tk::PlaceWindow . center")
-
         self.pw_var   = tk.StringVar()
         self.show_pw  = tk.BooleanVar(value=False)
         self.attempts = 0
-
         self._build()
 
     def _build(self):
@@ -126,20 +176,18 @@ class LoginWindow:
         self.err_var = tk.StringVar(value="")
         tk.Label(self.root, textvariable=self.err_var,
                  font=("Malgun Gothic", 9), bg=BG, fg=RED,
-                 wraplength=300, justify="center").pack(pady=(6, 0))
+                 wraplength=300, justify="center").pack(pady=(4, 0))
 
         self.login_btn = tk.Button(self.root, text="로그인",
                   font=("Malgun Gothic", 13, "bold"),
                   bg=ACCENT, fg="#000", relief="flat",
                   padx=50, pady=10, cursor="hand2",
                   command=self._login)
-        self.login_btn.pack(pady=(12, 0))
+        self.login_btn.pack(pady=(10, 0))
 
-        # 서버 연결 상태
         self.server_var = tk.StringVar(value="서버 확인 중...")
         tk.Label(self.root, textvariable=self.server_var,
-                 font=("Malgun Gothic", 8), bg=BG, fg=MUTED).pack(pady=(12, 0))
-
+                 font=("Malgun Gothic", 8), bg=BG, fg=MUTED).pack(pady=(10, 0))
         threading.Thread(target=self._check_server, daemon=True).start()
 
     def _toggle_show(self):
@@ -153,33 +201,27 @@ class LoginWindow:
             else:
                 self.root.after(0, lambda: self.server_var.set("⚠ 서버 응답 오류"))
         except Exception:
-            self.root.after(0, lambda: self.server_var.set("❌ 서버 연결 실패 - 인터넷 확인"))
+            self.root.after(0, lambda: self.server_var.set("❌ 서버 연결 실패"))
 
     def _login(self):
         if not REQ_OK:
-            messagebox.showerror("오류", "pip install requests 실행 후 재시도")
+            messagebox.showerror("오류", "pip install requests")
             return
-
         pw = self.pw_var.get().strip()
         if not pw:
             self.err_var.set("비밀번호를 입력하세요")
             return
-
         self.login_btn.config(state="disabled", text="확인 중...")
         self.err_var.set("")
-
         threading.Thread(target=self._do_login, args=(pw,), daemon=True).start()
 
     def _do_login(self, pw):
         try:
             device_id = get_device_id()
-            r = requests.post(
-                f"{SERVER_URL}/login",
-                json={"password": pw, "device_id": device_id},
-                timeout=10
-            )
+            r = requests.post(f"{SERVER_URL}/login",
+                              json={"password": pw, "device_id": device_id},
+                              timeout=10)
             data = r.json()
-
             if data.get("success"):
                 self.root.after(0, self._open_main)
             else:
@@ -187,7 +229,7 @@ class LoginWindow:
                 msg = data.get("msg", "오류 발생")
                 if self.attempts >= 5:
                     self.root.after(0, lambda: [
-                        messagebox.showerror("접근 차단", "비밀번호 5회 오류\n프로그램을 종료합니다."),
+                        messagebox.showerror("접근 차단", "5회 오류\n종료합니다."),
                         self.root.quit()
                     ])
                 else:
@@ -198,14 +240,9 @@ class LoginWindow:
                         self.login_btn.config(state="normal", text="로그인"),
                         self.pw_entry.focus()
                     ])
-        except requests.exceptions.ConnectionError:
-            self.root.after(0, lambda: [
-                self.err_var.set("❌ 서버에 연결할 수 없습니다\n인터넷 연결을 확인하세요"),
-                self.login_btn.config(state="normal", text="로그인")
-            ])
         except Exception as e:
             self.root.after(0, lambda: [
-                self.err_var.set(f"❌ 오류: {str(e)}"),
+                self.err_var.set(f"❌ 서버 연결 실패\n인터넷을 확인하세요"),
                 self.login_btn.config(state="normal", text="로그인")
             ])
 
@@ -222,31 +259,27 @@ class LoginWindow:
 class App:
     def __init__(self, root):
         self.root = root
-        self.root.title("🎫 자동 티켓팅 v9")
-        self.root.geometry("600x980")
+        self.root.title("🎫 자동 티켓팅 v10")
+        self.root.geometry("560x820")
         self.root.configure(bg=BG)
         self.root.resizable(False, False)
-
-        self.presets = load_presets()
 
         self.t_hour = tk.StringVar(value="00")
         self.t_min  = tk.StringVar(value="00")
         self.t_sec  = tk.StringVar(value="00")
         self.t_ms   = tk.StringVar(value="000")
 
+        # 예매 버튼 좌표 (정각 클릭용)
         self.book_x = tk.IntVar(value=0)
         self.book_y = tk.IntVar(value=0)
+        # 구역 버튼 좌표
         self.zone_x = tk.IntVar(value=0)
         self.zone_y = tk.IntVar(value=0)
-        self.auto_x = tk.IntVar(value=0)
-        self.auto_y = tk.IntVar(value=0)
-        self.plus_x = tk.IntVar(value=0)
-        self.plus_y = tk.IntVar(value=0)
-        self.next_x = tk.IntVar(value=0)
-        self.next_y = tk.IntVar(value=0)
 
-        self.seat_count      = tk.StringVar(value="2연석")
-        self.selected_preset = tk.StringVar(value="")
+        self.team_var  = tk.StringVar(value=list(TEAMS.keys())[0])
+        self.seat_var  = tk.StringVar(value="")
+        self.count_var = tk.StringVar(value="2연석")
+        self.time_offset = 0.0
 
         self.stop_flag = False
         self.paused    = False
@@ -254,12 +287,14 @@ class App:
         self._build()
         self._tick()
         self._update_mouse()
+        self._on_team_change()
 
     def _build(self):
+        # 헤더
         hf = tk.Frame(self.root, bg=BG)
         hf.pack(fill="x", pady=(14, 0))
         tk.Label(hf, text="🎫", font=("Segoe UI", 26), bg=BG).pack()
-        tk.Label(hf, text="자동 티켓팅 v9",
+        tk.Label(hf, text="자동 티켓팅 v10",
                  font=("Malgun Gothic", 15, "bold"), bg=BG, fg=TEXT).pack()
         self.clock_var = tk.StringVar()
         tk.Label(hf, textvariable=self.clock_var,
@@ -268,31 +303,76 @@ class App:
         tk.Label(hf, textvariable=self.mouse_var,
                  font=("Consolas", 9), bg=BG, fg=MUTED).pack()
 
-        # 프리셋
-        self._section("⭐ 저장된 좌석 프리셋")
-        pf = self._card()
-        pl = tk.Frame(pf, bg=CARD); pl.pack(fill="x")
-        tk.Label(pl, text="프리셋:", font=("Malgun Gothic", 10),
-                 bg=CARD, fg=MUTED).pack(side="left")
-        self.preset_menu = tk.OptionMenu(pl, self.selected_preset, "")
-        self.preset_menu.config(font=("Malgun Gothic", 10), bg=CARD2, fg=TEXT,
-                                activebackground=ACCENT, activeforeground="#000",
-                                relief="flat", highlightthickness=0, width=18)
-        self.preset_menu["menu"].config(bg=CARD2, fg=TEXT, font=("Malgun Gothic", 10))
-        self.preset_menu.pack(side="left", padx=(6, 0))
-        self._sbtn(pl, "✅ 불러오기", self._load_preset, GREEN).pack(side="left", padx=(8, 0))
-        self._sbtn(pl, "🗑 삭제", self._delete_preset, RED).pack(side="left", padx=(4, 0))
-        tk.Label(pf, text="※ 프리셋 선택 후 [불러오기] → 바로 시작 가능",
-                 font=("Malgun Gothic", 8), bg=CARD, fg=MUTED).pack(anchor="w", pady=(6, 0))
-        self._update_preset_menu()
+        # ── STEP 1: 팀 선택
+        self._section("STEP 1  팀 선택")
+        s1 = self._card()
+        team_list = list(TEAMS.keys())
+        tm = tk.Frame(s1, bg=CARD); tm.pack(fill="x")
+        for i, team in enumerate(team_list):
+            rb = tk.Radiobutton(tm, text=team, variable=self.team_var, value=team,
+                           font=("Malgun Gothic", 10), bg=CARD, fg=TEXT,
+                           selectcolor=BG, activebackground=CARD,
+                           command=self._on_team_change)
+            rb.grid(row=i//3, column=i%3, sticky="w", padx=8, pady=2)
 
-        # 목표 시각
-        self._section("STEP 1  목표 시각")
+        # ── STEP 2: 좌석 선택
+        self._section("STEP 2  좌석 선택")
+        s2 = self._card()
+        self.seat_frame = tk.Frame(s2, bg=CARD)
+        self.seat_frame.pack(fill="x")
+        self.img_status_var = tk.StringVar(value="")
+        self.img_status_lbl = tk.Label(s2, textvariable=self.img_status_var,
+                                        font=("Malgun Gothic", 9), bg=CARD, fg=MUTED)
+        self.img_status_lbl.pack(anchor="w", pady=(6, 0))
+
+        # ── STEP 3: 연석 수
+        self._section("STEP 3  연석 수")
+        s3 = self._card()
+        rf = tk.Frame(s3, bg=CARD); rf.pack(anchor="w")
+        tk.Label(rf, text="연석:", font=("Malgun Gothic", 10),
+                 bg=CARD, fg=MUTED).pack(side="left", padx=(0, 10))
+        for val in ["1석", "2연석", "4연석"]:
+            tk.Radiobutton(rf, text=val, variable=self.count_var, value=val,
+                           font=("Malgun Gothic", 11), bg=CARD, fg=TEXT,
+                           selectcolor=BG, activebackground=CARD).pack(side="left", padx=8)
+
+        # ── STEP 4: 예매 버튼 + 구역 좌표
+        self._section("STEP 4  좌표 설정 (예매버튼 + 구역)")
+        s4 = self._card()
+        tk.Label(s4, text="예매하기 버튼과 구역 버튼은 이미지마다 위치가 달라서 좌표로 설정",
+                 font=("Malgun Gothic", 8), bg=CARD, fg=MUTED).pack(anchor="w", pady=(0,6))
+
+        for label, vx, vy in [
+            ("① 예매하기 버튼", self.book_x, self.book_y),
+            ("② 구역 버튼",     self.zone_x, self.zone_y),
+        ]:
+            row = tk.Frame(s4, bg=CARD); row.pack(fill="x", pady=2)
+            tk.Label(row, text=label, font=("Malgun Gothic", 9),
+                     bg=CARD, fg=TEXT, width=14, anchor="w").pack(side="left")
+            tk.Label(row, text="X", font=("Consolas", 10),
+                     bg=CARD, fg=MUTED).pack(side="left")
+            tk.Entry(row, textvariable=vx, width=6, font=("Consolas", 11),
+                     bg="#111520", fg=TEXT, insertbackground=ACCENT, justify="center",
+                     relief="flat", highlightthickness=1, highlightcolor=ACCENT,
+                     highlightbackground=BORDER).pack(side="left", padx=(2,6))
+            tk.Label(row, text="Y", font=("Consolas", 10),
+                     bg=CARD, fg=MUTED).pack(side="left")
+            tk.Entry(row, textvariable=vy, width=6, font=("Consolas", 11),
+                     bg="#111520", fg=TEXT, insertbackground=ACCENT, justify="center",
+                     relief="flat", highlightthickness=1, highlightcolor=ACCENT,
+                     highlightbackground=BORDER).pack(side="left", padx=(2,8))
+            self._sbtn(row, "📍캡처",
+                       lambda x=vx, y=vy, l=label: self._capture3(x, y, l),
+                       YELLOW).pack(side="left")
+
+        # ── STEP 5: 목표 시각
+        self._section("STEP 5  목표 시각")
         tf = self._card()
         for var, lbl, w in [(self.t_hour,"시",3),(self.t_min,"분",3),
                              (self.t_sec,"초",3),(self.t_ms,"ms",4)]:
             col = tk.Frame(tf, bg=CARD); col.pack(side="left", padx=4)
-            tk.Label(col, text=lbl, font=("Malgun Gothic", 8), bg=CARD, fg=MUTED).pack()
+            tk.Label(col, text=lbl, font=("Malgun Gothic", 8),
+                     bg=CARD, fg=MUTED).pack()
             tk.Entry(col, textvariable=var, width=w,
                      font=("Consolas", 15, "bold"), bg="#111520", fg=ACCENT,
                      insertbackground=ACCENT, justify="center", relief="flat",
@@ -303,57 +383,11 @@ class App:
                          bg=CARD, fg=MUTED).pack(side="left", pady=(13, 0))
         self._sbtn(tf, "+5초", self._set_plus5, YELLOW).pack(side="right")
 
-        # 연석
-        self._section("STEP 2  연석 수")
-        s2 = self._card()
-        rf = tk.Frame(s2, bg=CARD); rf.pack(anchor="w")
-        tk.Label(rf, text="연석:", font=("Malgun Gothic", 10),
-                 bg=CARD, fg=MUTED).pack(side="left", padx=(0, 10))
-        for val in ["1석", "2연석", "4연석"]:
-            tk.Radiobutton(rf, text=val, variable=self.seat_count, value=val,
-                           font=("Malgun Gothic", 11), bg=CARD, fg=TEXT,
-                           selectcolor=BG, activebackground=CARD).pack(side="left", padx=8)
-
-        # 좌표 설정
-        self._section("STEP 3  버튼 좌표 설정")
-        c3 = self._card()
-        tk.Label(c3, text="Ctrl+0 줌100% + 브라우저 최대화 상태에서 캡처!",
-                 font=("Malgun Gothic", 9), bg=CARD, fg=YELLOW).pack(anchor="w", pady=(0, 6))
-
-        self._coord_entries = {}
-        rows = [
-            ("① 예매하기 버튼",    self.book_x, self.book_y, "book"),
-            ("② 구역 (블루존 등)", self.zone_x, self.zone_y, "zone"),
-            ("③ 자동배정 버튼",    self.auto_x, self.auto_y, "auto"),
-            ("④ + 수량버튼",       self.plus_x, self.plus_y, "plus"),
-            ("⑤ 다음단계 버튼",    self.next_x, self.next_y, "next"),
-        ]
-        for label, vx, vy, key in rows:
-            row = tk.Frame(c3, bg=CARD); row.pack(fill="x", pady=2)
-            sv = tk.StringVar(value="○")
-            sl = tk.Label(row, textvariable=sv, font=("Consolas", 12), bg=CARD, fg=MUTED)
-            sl.pack(side="left", padx=(0, 4))
-            self._coord_entries[key] = (sv, sl, vx, vy)
-            tk.Label(row, text=label, font=("Malgun Gothic", 9),
-                     bg=CARD, fg=TEXT, width=16, anchor="w").pack(side="left")
-            tk.Label(row, text="X", font=("Consolas", 10), bg=CARD, fg=MUTED).pack(side="left")
-            tk.Entry(row, textvariable=vx, width=6, font=("Consolas", 11),
-                     bg="#111520", fg=TEXT, insertbackground=ACCENT, justify="center",
-                     relief="flat", highlightthickness=1, highlightcolor=ACCENT,
-                     highlightbackground=BORDER).pack(side="left", padx=(2, 6))
-            tk.Label(row, text="Y", font=("Consolas", 10), bg=CARD, fg=MUTED).pack(side="left")
-            tk.Entry(row, textvariable=vy, width=6, font=("Consolas", 11),
-                     bg="#111520", fg=TEXT, insertbackground=ACCENT, justify="center",
-                     relief="flat", highlightthickness=1, highlightcolor=ACCENT,
-                     highlightbackground=BORDER).pack(side="left", padx=(2, 8))
-            self._sbtn(row, "📍캡처",
-                       lambda lbl=label, x=vx, y=vy, k=key: self._capture3(x, y, lbl, k),
-                       YELLOW).pack(side="left")
-
-        prow = tk.Frame(c3, bg=CARD); prow.pack(fill="x", pady=(8, 0))
-        self._sbtn(prow, "💾 프리셋으로 저장", self._save_preset, PURPLE).pack(side="left")
-        tk.Label(prow, text="← 이름 붙여서 저장 (예: 블루존2연석)",
-                 font=("Malgun Gothic", 8), bg=CARD, fg=MUTED).pack(side="left", padx=(8, 0))
+        # 서버 시간 동기화
+        self.offset_var = tk.StringVar(value="미동기화")
+        self._sbtn(tf, "🕐 서버시간 동기화", self._sync_time, ACCENT).pack(side="right", padx=(0,6))
+        tk.Label(tf, textvariable=self.offset_var,
+                 font=("Malgun Gothic", 8), bg=CARD, fg=MUTED).pack(side="right", padx=(0,4))
 
         # 로그
         self._section("📋 로그")
@@ -409,6 +443,43 @@ class App:
                          bg=color, fg=fg, relief="flat", padx=8, pady=3,
                          cursor="hand2", command=cmd)
 
+    def _on_team_change(self):
+        """팀 바꾸면 좌석 목록 업데이트"""
+        team  = self.team_var.get()
+        seats = TEAMS[team]["seats"]
+
+        for w in self.seat_frame.winfo_children():
+            w.destroy()
+
+        if seats:
+            self.seat_var.set(seats[0])
+        for i, seat in enumerate(seats):
+            rb = tk.Radiobutton(self.seat_frame, text=seat,
+                                variable=self.seat_var, value=seat,
+                                font=("Malgun Gothic", 10), bg=CARD, fg=TEXT,
+                                selectcolor=BG, activebackground=CARD,
+                                command=self._check_images)
+            rb.grid(row=i//2, column=i%2, sticky="w", padx=8, pady=2)
+
+        self._check_images()
+
+    def _check_images(self):
+        """선택한 팀/좌석의 이미지 파일 존재 여부 확인"""
+        team = self.team_var.get()
+        seat = self.seat_var.get()
+        if not seat:
+            return
+        missing = []
+        for btn in ["zone", "auto", "plus", "next"]:
+            if not os.path.exists(img_path(team, seat, btn)):
+                missing.append(btn)
+        if not missing:
+            self.img_status_var.set("✅ 모든 이미지 준비됨 → 바로 시작 가능!")
+            self.img_status_lbl.config(fg=GREEN)
+        else:
+            self.img_status_var.set(f"⚠ 이미지 없음: {', '.join(missing)} → 좌표로 대체됩니다")
+            self.img_status_lbl.config(fg=YELLOW)
+
     def _tick(self):
         now = time.time(); lt = time.localtime(now); ms = int((now%1)*1000)
         self.clock_var.set(f"{lt.tm_hour:02d}:{lt.tm_min:02d}:{lt.tm_sec:02d}.{ms:03d}")
@@ -427,6 +498,21 @@ class App:
         self.t_hour.set(f"{t.tm_hour:02d}"); self.t_min.set(f"{t.tm_min:02d}")
         self.t_sec.set(f"{t.tm_sec:02d}");   self.t_ms.set("000")
 
+    def _sync_time(self):
+        self.offset_var.set("동기화 중...")
+        def _do():
+            offset = get_server_time_offset()
+            self.time_offset = offset
+            if abs(offset) < 0.001:
+                msg = "✅ PC시간 = 서버시간"
+            elif offset > 0:
+                msg = f"✅ 서버 {offset*1000:.0f}ms 빠름 보정"
+            else:
+                msg = f"✅ 서버 {abs(offset)*1000:.0f}ms 느림 보정"
+            self._log(f"🕐 동기화: {msg}")
+            self.root.after(0, lambda: self.offset_var.set(msg))
+        threading.Thread(target=_do, daemon=True).start()
+
     def _log(self, msg):
         def _do():
             self.log_box.config(state="normal")
@@ -436,7 +522,10 @@ class App:
         self.root.after(0, _do)
 
     def _set_status(self, msg, color=MUTED):
-        self.root.after(0, lambda: (self.status_var.set(msg), self.status_lbl.config(fg=color)))
+        self.root.after(0, lambda: (
+            self.status_var.set(msg),
+            self.status_lbl.config(fg=color)
+        ))
 
     def _captcha_done(self):
         self.paused = False
@@ -452,14 +541,7 @@ class App:
             self.captcha_btn.config(state="disabled"),
         ))
 
-    def _update_coord_states(self):
-        for key, (sv, sl, vx, vy) in self._coord_entries.items():
-            if vx.get() > 0 or vy.get() > 0:
-                sv.set("✅"); sl.config(fg=GREEN)
-            else:
-                sv.set("○"); sl.config(fg=MUTED)
-
-    def _capture3(self, vx, vy, label, key):
+    def _capture3(self, vx, vy, label):
         if not PG_OK: return
         self._log(f"3초 후 [{label}] 위에 마우스 올려두세요!")
         def _do():
@@ -470,68 +552,16 @@ class App:
             vx.set(x); vy.set(y)
             self._log(f"✅ [{label}] 좌표: ({x}, {y})")
             self._set_status(f"✅ {label} 캡처 완료", GREEN)
-            self.root.after(0, self._update_coord_states)
         threading.Thread(target=_do, daemon=True).start()
 
-    def _save_preset(self):
-        name = simpledialog.askstring("프리셋 저장", "이름 입력 (예: 블루존2연석)", parent=self.root)
-        if not name or not name.strip(): return
-        name = name.strip()
-        self.presets[name] = {
-            "book": [self.book_x.get(), self.book_y.get()],
-            "zone": [self.zone_x.get(), self.zone_y.get()],
-            "auto": [self.auto_x.get(), self.auto_y.get()],
-            "plus": [self.plus_x.get(), self.plus_y.get()],
-            "next": [self.next_x.get(), self.next_y.get()],
-            "seat_count": self.seat_count.get(),
-        }
-        save_presets(self.presets)
-        self._update_preset_menu()
-        self.selected_preset.set(name)
-        self._log(f"💾 저장: [{name}]")
-        messagebox.showinfo("저장 완료", f"[{name}] 저장 완료!")
-
-    def _load_preset(self):
-        name = self.selected_preset.get()
-        if not name or name not in self.presets:
-            messagebox.showerror("오류", "프리셋을 선택하세요!"); return
-        p = self.presets[name]
-        self.book_x.set(p["book"][0]); self.book_y.set(p["book"][1])
-        self.zone_x.set(p["zone"][0]); self.zone_y.set(p["zone"][1])
-        self.auto_x.set(p["auto"][0]); self.auto_y.set(p["auto"][1])
-        self.plus_x.set(p["plus"][0]); self.plus_y.set(p["plus"][1])
-        self.next_x.set(p["next"][0]); self.next_y.set(p["next"][1])
-        self.seat_count.set(p.get("seat_count", "2연석"))
-        self._update_coord_states()
-        self._log(f"📂 불러옴: [{name}]")
-        self._set_status(f"✅ [{name}] 로드 완료", GREEN)
-
-    def _delete_preset(self):
-        name = self.selected_preset.get()
-        if not name or name not in self.presets:
-            messagebox.showerror("오류", "삭제할 프리셋을 선택하세요!"); return
-        if messagebox.askyesno("삭제 확인", f"[{name}] 삭제할까요?"):
-            del self.presets[name]
-            save_presets(self.presets)
-            self._update_preset_menu()
-
-    def _update_preset_menu(self):
-        menu = self.preset_menu["menu"]
-        menu.delete(0, "end")
-        if self.presets:
-            for name in self.presets:
-                menu.add_command(label=name, command=lambda n=name: self.selected_preset.set(n))
-            if self.selected_preset.get() not in self.presets:
-                self.selected_preset.set(list(self.presets.keys())[0])
-        else:
-            menu.add_command(label="(저장된 프리셋 없음)", command=lambda: None)
-            self.selected_preset.set("")
-
+    # ── 시작 ─────────────────────────────────────────
     def _start(self):
         if not PG_OK:
-            messagebox.showerror("오류", "pip install pyautogui"); return
+            messagebox.showerror("오류", "pip install pyautogui pillow"); return
         if self.book_x.get() == 0:
             messagebox.showerror("오류", "예매하기 버튼 좌표를 설정하세요!"); return
+        if not self.seat_var.get():
+            messagebox.showerror("오류", "좌석을 선택하세요!"); return
         try:
             h = int(self.t_hour.get()); m = int(self.t_min.get())
             s = int(self.t_sec.get());  ms = int(self.t_ms.get())
@@ -541,11 +571,11 @@ class App:
         now = time.localtime()
         target_ts = time.mktime(time.struct_time(
             (now.tm_year, now.tm_mon, now.tm_mday, h, m, s, 0, 0, -1)
-        )) + ms / 1000.0
+        )) + ms / 1000.0 - self.time_offset
         if target_ts <= time.time():
             target_ts += 86400
 
-        sc = self.seat_count.get()
+        sc = self.count_var.get()
         plus_clicks = 4 if sc == "4연석" else (2 if sc == "2연석" else 1)
 
         self.stop_flag = False
@@ -557,80 +587,113 @@ class App:
             "target_ts"  : target_ts,
             "book"       : (self.book_x.get(), self.book_y.get()),
             "zone"       : (self.zone_x.get(), self.zone_y.get()),
-            "auto"       : (self.auto_x.get(), self.auto_y.get()),
-            "plus"       : (self.plus_x.get(), self.plus_y.get()),
-            "next"       : (self.next_x.get(), self.next_y.get()),
+            "team"       : self.team_var.get(),
+            "seat"       : self.seat_var.get(),
             "plus_clicks": plus_clicks,
         }
+        self._log(f"▶ {cfg['team']} | {cfg['seat']} | {sc}")
         threading.Thread(target=self._run, args=(cfg,), daemon=True).start()
 
+    # ── 핵심 실행 ─────────────────────────────────────
     def _run(self, cfg):
         target_ts = cfg["target_ts"]
         self._log(f"⏳ 목표: {time.strftime('%H:%M:%S', time.localtime(target_ts))}"
                   f".{int((target_ts%1)*1000):03d}")
 
+        # 워밍업
         while not self.stop_flag:
             remaining = target_ts - time.time()
             if remaining <= 0.05: break
             self._set_status(f"⏳ {remaining:.2f}초 남음", YELLOW)
+            if remaining < 3:
+                try: pyautogui.position()
+                except: pass
             time.sleep(max(0.001, remaining * 0.4))
         while not self.stop_flag and time.time() < target_ts:
             pass
         if self.stop_flag: return
 
+        # 예매하기 클릭 (좌표)
         diff = (time.time() - target_ts) * 1000
         self._log(f"⚡ 예매하기 클릭! 오차: {diff:+.2f}ms")
         self._set_status("⚡ 예매하기 클릭!", ACCENT)
         pyautogui.click(*cfg["book"])
 
+        # 캡챠 대기
         self._log("캡챠 있으면 직접 풀고 [✅ 캡챠 완료] 누르세요")
-        self._set_status("⚠ 캡챠 있으면 풀고 '캡챠 완료' 누르세요", YELLOW)
+        self._set_status("⚠ 캡챠 풀고 '캡챠 완료' 누르세요", YELLOW)
         self.paused = True
         self.root.after(0, lambda: self.captcha_btn.config(state="normal"))
         while self.paused and not self.stop_flag:
             time.sleep(0.1)
         if self.stop_flag: return
 
-        time.sleep(0.8)
+        team = cfg["team"]
+        seat = cfg["seat"]
+
+        # 구역 클릭 (좌표)
+        time.sleep(0.5)
         if cfg["zone"][0] > 0:
             self._log("🗺 구역 클릭")
             pyautogui.click(*cfg["zone"])
-            time.sleep(0.8)
+            time.sleep(0.5)
         if self.stop_flag: return
 
-        if cfg["auto"][0] > 0:
-            self._log("🎯 자동배정 클릭")
-            pyautogui.click(*cfg["auto"])
-            time.sleep(0.8)
+        # 자동배정 클릭 (이미지 매칭)
+        self._click_image(team, seat, "auto", "자동배정", timeout=5)
+        time.sleep(0.3)
         if self.stop_flag: return
 
-        if cfg["plus"][0] > 0:
-            n = cfg["plus_clicks"]
-            self._log(f"➕ + 버튼 {n}번")
-            for i in range(n):
-                if self.stop_flag: return
-                pyautogui.click(*cfg["plus"])
-                time.sleep(0.3)
+        # + 버튼 N번 (이미지 매칭)
+        n = cfg["plus_clicks"]
+        self._log(f"➕ + 버튼 {n}번 클릭")
+        for i in range(n):
+            if self.stop_flag: return
+            self._click_image(team, seat, "plus", f"+({i+1}/{n})", timeout=3)
+            time.sleep(0.15)
         if self.stop_flag: return
 
-        time.sleep(0.5)
-        if cfg["next"][0] > 0:
-            self._log("➡ 다음단계 클릭")
-            pyautogui.click(*cfg["next"])
-            self._log("🎉 완료! 결제 진행하세요.")
-            self._set_status("🎉 완료! 결제 진행하세요", GREEN)
+        # 다음단계 클릭 (이미지 매칭)
+        time.sleep(0.3)
+        self._click_image(team, seat, "next", "다음단계", timeout=5)
 
+        self._log("🎉 완료! 결제 진행하세요.")
+        self._set_status("🎉 완료! 결제 진행하세요", GREEN)
         self.root.after(0, lambda: (
             self.start_btn.config(state="normal"),
             self.stop_btn.config(state="disabled"),
         ))
 
+    def _click_image(self, team, seat, btn, label, timeout=3.0):
+        """이미지 매칭으로 버튼 클릭"""
+        path = img_path(team, seat, btn)
+        if os.path.exists(path):
+            start = time.time()
+            while time.time() - start < timeout:
+                if self.stop_flag: return False
+                try:
+                    loc = pyautogui.locateOnScreen(path, confidence=0.8)
+                    if loc:
+                        cx, cy = pyautogui.center(loc)
+                        pyautogui.click(cx, cy)
+                        elapsed = (time.time() - start) * 1000
+                        self._log(f"✅ [{label}] 이미지 클릭 ({elapsed:.0f}ms)")
+                        return True
+                except Exception:
+                    pass
+                time.sleep(0.05)
+            self._log(f"⚠ [{label}] 이미지 못 찾음")
+        else:
+            self._log(f"⚠ [{label}] 이미지 파일 없음: {path}")
+        return False
+
 
 if __name__ == "__main__":
+    os.makedirs(IMG_DIR, exist_ok=True)
     if not REQ_OK:
         print("pip install requests")
     if not PG_OK:
-        print("pip install pyautogui")
+        print("pip install pyautogui pillow")
     root = tk.Tk()
     LoginWindow(root)
     root.mainloop()
