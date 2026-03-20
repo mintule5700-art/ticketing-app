@@ -248,9 +248,10 @@ class App:
         self.zone_x = tk.IntVar(value=0)
         self.zone_y = tk.IntVar(value=0)
 
-        self.team_var  = tk.StringVar(value=list(TEAMS.keys())[0])
-        self.seat_var  = tk.StringVar(value="")
-        self.count_var = tk.StringVar(value="2연석")
+        self.team_var   = tk.StringVar(value=list(TEAMS.keys())[0])
+        self.seat_var   = tk.StringVar(value="")
+        self.count_var  = tk.StringVar(value="2연석")
+        self.book_clicks = tk.IntVar(value=3)  # 예매버튼 클릭 횟수
         self.time_offset = 0.0
 
         self.stop_flag = False
@@ -316,8 +317,9 @@ class App:
         self.img_status_lbl.pack(anchor="w", pady=(6, 0))
 
         # ── STEP 3: 연석 수
-        self._section("STEP 3  연석 수")
+        self._section("STEP 3  클릭 설정")
         s3 = self._card()
+        # 연석
         rf = tk.Frame(s3, bg=CARD); rf.pack(anchor="w")
         tk.Label(rf, text="연석:", font=("Malgun Gothic", 10),
                  bg=CARD, fg=MUTED).pack(side="left", padx=(0, 10))
@@ -325,6 +327,17 @@ class App:
             tk.Radiobutton(rf, text=val, variable=self.count_var, value=val,
                            font=("Malgun Gothic", 11), bg=CARD, fg=TEXT,
                            selectcolor=BG, activebackground=CARD).pack(side="left", padx=8)
+
+        # 예매버튼 클릭 횟수
+        bf = tk.Frame(s3, bg=CARD); bf.pack(anchor="w", pady=(10, 0))
+        tk.Label(bf, text="예매버튼 클릭:",
+                 font=("Malgun Gothic", 10), bg=CARD, fg=MUTED).pack(side="left", padx=(0, 10))
+        for val in [1, 3, 5, 10]:
+            tk.Radiobutton(bf, text=f"{val}회", variable=self.book_clicks, value=val,
+                           font=("Malgun Gothic", 11), bg=CARD, fg=TEXT,
+                           selectcolor=BG, activebackground=CARD).pack(side="left", padx=8)
+        tk.Label(s3, text="※ 정각 기준 0.3초 동안 연속 클릭 (대기열 진입 확률 향상)",
+                 font=("Malgun Gothic", 8), bg=CARD, fg=MUTED).pack(anchor="w", pady=(4,0))
 
         # ── STEP 4: 예매 버튼 + 구역 좌표
         self._section("STEP 4  좌표 설정 (예매버튼 + 구역)")
@@ -583,6 +596,7 @@ class App:
             "team"       : self.team_var.get(),
             "seat"       : self.seat_var.get(),
             "plus_clicks": plus_clicks,
+            "book_clicks": self.book_clicks.get(),
         }
         self._log(f"▶ {cfg['team']} | {cfg['seat']} | {sc}")
         threading.Thread(target=self._run, args=(cfg,), daemon=True).start()
@@ -606,25 +620,39 @@ class App:
             pass
         if self.stop_flag: return
 
-        # 예매하기 클릭 (좌표)
+        # 예매하기 버튼 - 0.3초 동안 연속 클릭
         diff = (time.time() - target_ts) * 1000
-        self._log(f"⚡ 예매하기 클릭! 오차: {diff:+.2f}ms")
+        n_clicks = cfg["book_clicks"]
+        self._log(f"⚡ 예매하기 {n_clicks}회 연속 클릭! 오차: {diff:+.2f}ms")
         self._set_status("⚡ 예매하기 클릭!", ACCENT)
-        pyautogui.click(*cfg["book"])
 
-        # 캡챠 대기
-        self._log("캡챠 있으면 직접 풀고 [✅ 캡챠 완료] 누르세요")
-        self._set_status("⚠ 캡챠 풀고 '캡챠 완료' 누르세요", YELLOW)
+        click_end = target_ts + 0.3  # 정각 + 0.3초 동안
+        clicked = 0
+        while time.time() < click_end and clicked < n_clicks:
+            pyautogui.click(*cfg["book"])
+            clicked += 1
+            if clicked < n_clicks:
+                # 균등 간격으로 클릭
+                time.sleep(0.3 / n_clicks)
+        self._log(f"  → {clicked}회 클릭 완료")
+
+        # 캡챠 대기 (스페이스바 or 버튼)
+        self._log("캡챠 있으면 직접 풀고 [스페이스바] 또는 [✅ 캡챠 완료] 누르세요")
+        self._set_status("⚠ 캡챠 풀고 스페이스바 누르세요", YELLOW)
         self.paused = True
         self.root.after(0, lambda: self.captcha_btn.config(state="normal"))
+        # 스페이스바 바인딩
+        self.root.after(0, lambda: self.root.bind("<space>", lambda e: self._captcha_done()))
         while self.paused and not self.stop_flag:
             time.sleep(0.1)
+        # 스페이스바 바인딩 해제
+        self.root.after(0, lambda: self.root.unbind("<space>"))
         if self.stop_flag: return
 
         team = cfg["team"]
         seat = cfg["seat"]
 
-        # 구역 클릭 (좌표)
+        # 1. 구역 클릭 (좌표)
         time.sleep(0.5)
         if cfg["zone"][0] > 0:
             self._log("🗺 구역 클릭")
@@ -632,12 +660,12 @@ class App:
             time.sleep(0.5)
         if self.stop_flag: return
 
-        # 자동배정 클릭 (이미지 매칭)
+        # 2. 자동배정 클릭 (이미지 매칭)
         self._click_image(team, seat, "auto", "자동배정", timeout=5)
         time.sleep(0.3)
         if self.stop_flag: return
 
-        # + 버튼 N번 (이미지 매칭)
+        # 3. + 버튼 N번 (이미지 매칭)
         n = cfg["plus_clicks"]
         self._log(f"➕ + 버튼 {n}번 클릭")
         for i in range(n):
@@ -646,7 +674,7 @@ class App:
             time.sleep(0.15)
         if self.stop_flag: return
 
-        # 다음단계 클릭 (이미지 매칭)
+        # 4. 다음단계 클릭 (이미지 매칭)
         time.sleep(0.3)
         self._click_image(team, seat, "next", "다음단계", timeout=5)
 
@@ -658,26 +686,30 @@ class App:
         ))
 
     def _click_image(self, team, seat, btn, label, timeout=3.0):
-        """이미지 매칭으로 버튼 클릭"""
+        """이미지 매칭으로 버튼 클릭 - confidence 낮춰서 더 잘 찾게"""
         path = img_path(team, seat, btn)
         if os.path.exists(path):
             start = time.time()
-            while time.time() - start < timeout:
-                if self.stop_flag: return False
-                try:
-                    loc = pyautogui.locateOnScreen(path, confidence=0.8)
-                    if loc:
-                        cx, cy = pyautogui.center(loc)
-                        pyautogui.click(cx, cy)
-                        elapsed = (time.time() - start) * 1000
-                        self._log(f"✅ [{label}] 이미지 클릭 ({elapsed:.0f}ms)")
-                        return True
-                except Exception:
-                    pass
-                time.sleep(0.05)
-            self._log(f"⚠ [{label}] 이미지 못 찾음")
+            # confidence 0.7 → 0.6 → 0.5 순으로 낮춰가며 시도
+            for confidence in [0.7, 0.6, 0.5]:
+                while time.time() - start < timeout:
+                    if self.stop_flag: return False
+                    try:
+                        loc = pyautogui.locateOnScreen(path, confidence=confidence)
+                        if loc:
+                            cx, cy = pyautogui.center(loc)
+                            pyautogui.click(cx, cy)
+                            elapsed = (time.time() - start) * 1000
+                            self._log(f"✅ [{label}] 클릭 ({elapsed:.0f}ms, conf={confidence})")
+                            return True
+                    except Exception:
+                        pass
+                    time.sleep(0.05)
+                if time.time() - start >= timeout:
+                    break
+            self._log(f"⚠ [{label}] 이미지 못 찾음 → 건너뜀")
         else:
-            self._log(f"⚠ [{label}] 이미지 파일 없음: {path}")
+            self._log(f"⚠ [{label}] 이미지 없음 ({path})")
         return False
 
 
