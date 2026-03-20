@@ -262,8 +262,31 @@ class App:
         self._on_team_change()
 
     def _build(self):
+        # 스크롤 가능한 캔버스 설정
+        canvas = tk.Canvas(self.root, bg=BG, highlightthickness=0)
+        scrollbar = tk.Scrollbar(self.root, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        # 실제 내용이 들어갈 프레임
+        self.frame = tk.Frame(canvas, bg=BG)
+        frame_id = canvas.create_window((0, 0), window=self.frame, anchor="nw")
+
+        def _on_resize(e):
+            canvas.itemconfig(frame_id, width=canvas.winfo_width())
+        def _on_frame_configure(e):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        def _on_mousewheel(e):
+            canvas.yview_scroll(int(-1*(e.delta/120)), "units")
+
+        canvas.bind("<Configure>", _on_resize)
+        self.frame.bind("<Configure>", _on_frame_configure)
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        # 이제 self.frame 에 위젯 추가
         # 헤더
-        hf = tk.Frame(self.root, bg=BG)
+        hf = tk.Frame(self.frame, bg=BG)
         hf.pack(fill="x", pady=(14, 0))
         tk.Label(hf, text="🎫", font=("Segoe UI", 26), bg=BG).pack()
         tk.Label(hf, text="자동 티켓팅 v10",
@@ -364,18 +387,18 @@ class App:
         # 로그
         self._section("📋 로그")
         self.log_box = scrolledtext.ScrolledText(
-            self.root, height=5, font=("Consolas", 9),
+            self.frame, height=5, font=("Consolas", 9),
             bg="#0d1017", fg=TEXT, relief="flat",
             highlightthickness=1, highlightbackground=BORDER,
             state="disabled")
         self.log_box.pack(fill="x", padx=20, pady=(0, 4))
 
         self.status_var = tk.StringVar(value="대기 중")
-        self.status_lbl = tk.Label(self.root, textvariable=self.status_var,
+        self.status_lbl = tk.Label(self.frame, textvariable=self.status_var,
                                    font=("Malgun Gothic", 11, "bold"), bg=BG, fg=MUTED)
         self.status_lbl.pack(pady=(0, 4))
 
-        br = tk.Frame(self.root, bg=BG); br.pack(pady=4)
+        br = tk.Frame(self.frame, bg=BG); br.pack(pady=4)
         self.start_btn = tk.Button(br, text="▶  시작",
                                    font=("Malgun Gothic", 13, "bold"),
                                    bg=ACCENT, fg="#000", relief="flat",
@@ -397,15 +420,15 @@ class App:
                                   command=self._stop, state="disabled")
         self.stop_btn.pack(side="left", padx=6)
 
-        tk.Label(self.root, text="💡 마우스 왼쪽 상단 모서리 → 강제 중단",
-                 font=("Malgun Gothic", 8), bg=BG, fg=MUTED).pack(pady=(2, 8))
+        tk.Label(self.frame, text="💡 마우스 왼쪽 상단 모서리 → 강제 중단",
+                 font=("Malgun Gothic", 8), bg=BG, fg=MUTED).pack(pady=(2, 16))
 
     def _section(self, t):
-        tk.Label(self.root, text=t, font=("Malgun Gothic", 10, "bold"),
+        tk.Label(self.frame, text=t, font=("Malgun Gothic", 10, "bold"),
                  bg=BG, fg=MUTED).pack(anchor="w", padx=22, pady=(10, 2))
 
     def _card(self):
-        f = tk.Frame(self.root, bg=CARD, padx=12, pady=10)
+        f = tk.Frame(self.frame, bg=CARD, padx=12, pady=10)
         f.pack(fill="x", padx=20, pady=(0, 2))
         return f
 
