@@ -55,20 +55,16 @@ DEVICE_FILE = os.path.join(BASE_DIR, ".device_id")
 # ── 팀 & 좌석 구성 ───────────────────────────────────
 TEAMS = {
     "삼성 라이온즈": {
-        "seats": ["블루존", "원정응원석", "1루 내야지정석", "3루 내야지정석",
-                  "외야 잔디석", "SKY석"],
+        "seats": ["1루_익사이팅석", "3루_내야지정석", "3루_익사이팅석", "블루존", "원정응원석"],
     },
     "LG 트윈스": {
-        "seats": ["레드존", "블루존", "외야 자유석", "내야 지정석",
-                  "프리미엄석", "테이블석"],
+        "seats": [],
     },
     "한화 이글스": {
-        "seats": ["오렌지존", "외야", "내야 1루", "내야 3루",
-                  "중앙지정석", "테이블석"],
+        "seats": [],
     },
     "KT 위즈": {
-        "seats": ["KT존", "외야석", "내야 1루", "내야 3루",
-                  "익사이팅석", "테이블석"],
+        "seats": [],
     },
 }
 
@@ -420,7 +416,6 @@ class App:
                          cursor="hand2", command=cmd)
 
     def _on_team_change(self):
-        """팀 바꾸면 좌석 목록 업데이트"""
         team  = self.team_var.get()
         seats = TEAMS[team]["seats"]
 
@@ -429,13 +424,17 @@ class App:
 
         if seats:
             self.seat_var.set(seats[0])
-        for i, seat in enumerate(seats):
-            rb = tk.Radiobutton(self.seat_frame, text=seat,
-                                variable=self.seat_var, value=seat,
-                                font=("Malgun Gothic", 10), bg=CARD, fg=TEXT,
-                                selectcolor=BG, activebackground=CARD,
-                                command=self._check_images)
-            rb.grid(row=i//2, column=i%2, sticky="w", padx=8, pady=2)
+            for i, seat in enumerate(seats):
+                rb = tk.Radiobutton(self.seat_frame, text=seat,
+                                    variable=self.seat_var, value=seat,
+                                    font=("Malgun Gothic", 10), bg=CARD, fg=TEXT,
+                                    selectcolor=BG, activebackground=CARD,
+                                    command=self._check_images)
+                rb.grid(row=i//2, column=i%2, sticky="w", padx=8, pady=2)
+        else:
+            self.seat_var.set("")
+            tk.Label(self.seat_frame, text="⚠ 준비 중인 팀입니다",
+                     font=("Malgun Gothic", 10), bg=CARD, fg=YELLOW).pack(anchor="w")
 
         self._check_images()
 
